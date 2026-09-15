@@ -2,7 +2,7 @@ name: Validate Annotation Package
 
 on:
   issues:
-    types: [opened]
+    types: [opened, reopen]
 
 permissions:
   contents: read
