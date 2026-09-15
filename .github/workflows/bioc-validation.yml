@@ -164,7 +164,7 @@ jobs:
           echo "Installing package and dependencies: $PACKAGE_TARBALL"
 
           Rscript -e 'BiocManager::install(version = "devel", ask = FALSE, update = TRUE)'
-
+	  Rscript -e 'BiocManager::install("remotes", ask = FALSE, update = FALSE)'
           Rscript -e 'args <- commandArgs(trailingOnly = TRUE); BiocManager::install(args[1], dependencies = c("Depends", "Imports", "LinkingTo", "Suggests", "Enhances"), version = "devel", ask = FALSE, update = TRUE)' \
             "$PACKAGE_TARBALL" \
             > "$RUNNER_TEMP/dependencies.log" 2>&1
