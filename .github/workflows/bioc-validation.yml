@@ -163,7 +163,7 @@ jobs:
 
           echo "Installing package and dependencies: $PACKAGE_TARBALL"
 
-          Rscript -e 'args <- commandArgs(trailingOnly = TRUE); BiocManager::install(args[1], dependencies = c("Depends", "Imports", "LinkingTo", "Suggests", "Enhances"), version = "devel", ask = FALSE, update = FALSE)' \
+          Rscript -e 'args <- commandArgs(trailingOnly = TRUE); BiocManager::install(args[1], dependencies = c("Depends", "Imports", "LinkingTo", "Suggests", "Enhances"), version = "devel", ask = FALSE, update = TRUE)' \
             "$PACKAGE_TARBALL" \
             > "$RUNNER_TEMP/dependencies.log" 2>&1
 
@@ -316,17 +316,20 @@ jobs:
         run: |
 
           gh issue edit "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
             --remove-label "validation:passed" \
             --remove-label "validation:failed"
 
           if [ "$RESULT" = "passed" ]; then
 
             gh issue edit "${{ github.event.issue.number }}" \
+              --repo "${{ github.repository }}" \
               --add-label "validation:passed"
 
           else
 
             gh issue edit "${{ github.event.issue.number }}" \
+              --repo "${{ github.repository }}" \
               --add-label "validation:failed"
 
           fi
@@ -416,4 +419,5 @@ jobs:
           } > "$RUNNER_TEMP/report.md"
 
           gh issue comment "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
             --body-file "$RUNNER_TEMP/report.md"
