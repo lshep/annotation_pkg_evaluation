@@ -169,7 +169,7 @@ jobs:
 
           Rscript -e 'BiocManager::install("remotes", ask = FALSE, update = FALSE)'
 
-          Rscript -e 'remotes::install_local(commandArgs(trailingOnly = TRUE)[1], dependencies = TRUE, upgrade = "never")' \
+          Rscript -e 'repos <- BiocManager::repositories(); remotes::install_local(commandArgs(trailingOnly = TRUE)[1], dependencies = TRUE, upgrade = "never", repos = repos)' \
             "$PACKAGE_TARBALL" \
             > "$RUNNER_TEMP/dependencies.log" 2>&1
 
