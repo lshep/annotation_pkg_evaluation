@@ -178,12 +178,18 @@ jobs:
           Rscript -e 'tinytex::install_tinytex()'
 
           echo
+          echo "Adding TinyTeX to PATH..."
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/bin:$PATH"
+
+          echo
           echo "TinyTeX location:"
           Rscript -e 'cat(tinytex::tinytex_root(), "\n")'
 
           echo
           echo "Checking LaTeX:"
-          Rscript -e 'cat("pdflatex: ", Sys.which("pdflatex"), "\n")'
+          echo "PATH=$PATH"
+          echo "pdflatex: $(command -v pdflatex || echo 'NOT FOUND')"
           pdflatex --version | head -n 2
 
       # ------------------------------------------------------------
