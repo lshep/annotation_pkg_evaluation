@@ -49,10 +49,58 @@ jobs:
           cd "$RUNNER_TEMP/package-validation"
           pwd
 
-      - name: Check gh
+      # ------------------------------------------------------------
+      # Install GitHub CLI
+      # ------------------------------------------------------------
+
+      - name: Install GitHub CLI
         run: |
-          command -v gh || true
-          apt-cache policy gh || true
+          set -e
+
+          echo "=== OS ==="
+          cat /etc/os-release
+
+          echo
+          echo "=== Existing gh ==="
+          command -v gh || echo "gh is not currently installed"
+
+          echo
+          echo "=== apt sources ==="
+          grep -Rhv '^[[:space:]]*#' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+
+          echo
+          echo "=== Installing GitHub CLI repository ==="
+
+          apt-get update
+
+          apt-get install -y --no-install-recommends \
+            curl \
+            gpg
+
+          mkdir -p -m 755 /etc/apt/keyrings
+
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+
+          chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            > /etc/apt/sources.list.d/github-cli.list
+
+          apt-get update
+
+          echo
+          echo "=== Available gh package ==="
+          apt-cache policy gh
+
+          echo
+          echo "=== Installing gh ==="
+          apt-get install -y --no-install-recommends gh
+
+          echo
+          echo "=== Installed gh ==="
+          command -v gh
+          gh --version
 
       # ------------------------------------------------------------
       # Obtain package source
