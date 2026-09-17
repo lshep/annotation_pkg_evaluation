@@ -49,6 +49,10 @@ jobs:
           cd "$RUNNER_TEMP/package-validation"
           pwd
 
+      - name: Check gh
+        run: |
+          command -v gh || true
+          apt-cache policy gh || true
 
       # ------------------------------------------------------------
       # Obtain package source
