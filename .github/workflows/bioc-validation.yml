@@ -155,42 +155,11 @@ jobs:
           apt-get install -y --no-install-recommends apt-utils
           apt-get install -y --no-install-recommends \
             curl \
-            libcurl4-openssl-dev
+            libcurl4-openssl-dev \
+            texlive-latex-base \
+            texlive-fonts-extra
           apt-get clean
           rm -rf /var/lib/apt/lists/*
-
-      # ------------------------------------------------------------
-      # Install TinyTeX
-      #
-      # TinyTeX provides pdflatex and installs additional LaTeX
-      # packages automatically when they are needed.
-      # ------------------------------------------------------------
-
-      - name: Install TinyTeX
-        run: |
-          set -e
-
-          echo "Installing R package tinytex..."
-          Rscript -e 'install.packages("tinytex", repos = "https://cloud.r-project.org")'
-
-          echo
-          echo "Installing TinyTeX..."
-          Rscript -e 'tinytex::install_tinytex()'
-
-          echo
-          echo "Adding TinyTeX to PATH..."
-          echo "$HOME/bin" >> "$GITHUB_PATH"
-          export PATH="$HOME/bin:$PATH"
-
-          echo
-          echo "TinyTeX location:"
-          Rscript -e 'cat(tinytex::tinytex_root(), "\n")'
-
-          echo
-          echo "Checking LaTeX:"
-          echo "PATH=$PATH"
-          echo "pdflatex: $(command -v pdflatex || echo 'NOT FOUND')"
-          pdflatex --version | head -n 2
 
       # ------------------------------------------------------------
       # Install package and dependencies with BiocManager
