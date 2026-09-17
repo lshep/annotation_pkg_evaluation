@@ -61,6 +61,7 @@ jobs:
         id: source
         env:
           PACKAGE_URL: ${{ steps.package.outputs.url }}
+        shell: bash
         run: |
           set -e
 
@@ -103,7 +104,6 @@ jobs:
 
       - name: Install package and dependencies with BiocManager
         id: dependencies
-        if: steps.build.outcome == 'success'
         run: |
           set +e
 
