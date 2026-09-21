@@ -1,0 +1,433 @@
+name: Validate Annotation Package
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+#    timeout-minutes: 180
+
+    steps:
+
+      # ------------------------------------------------------------
+      # Set up R
+      # ------------------------------------------------------------
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: 'release'
+
+
+      # ------------------------------------------------------------
+      # Install BiocManager
+      # ------------------------------------------------------------
+
+      - name: Install BiocManager
+        run: |
+          Rscript -e 'install.packages("BiocManager", repos = "https://cloud.r-project.org")'
+
+
+      # ------------------------------------------------------------
+      # Extract Package_URL from the issue
+      # ------------------------------------------------------------
+
+      - name: Extract package URL
+        id: package
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          PACKAGE_URL=$(printf '%s\n' "$ISSUE_BODY" |
+            sed -n 's/^[[:space:]]*-*[[:space:]]*Package_URL:[[:space:]]*//p' |
+            head -n 1 |
+            xargs)
+
+          if [ -z "$PACKAGE_URL" ]; then
+            echo "No Package_URL was found in the issue."
+            exit 1
+          fi
+
+          echo "Package URL: $PACKAGE_URL"
+          echo "url=$PACKAGE_URL" >> "$GITHUB_OUTPUT"
+
+
+      # ------------------------------------------------------------
+      # Prepare temporary workspace
+      # ------------------------------------------------------------
+
+      - name: Prepare workspace
+        run: |
+          mkdir -p "$RUNNER_TEMP/package-validation"
+          cd "$RUNNER_TEMP/package-validation"
+          pwd
+
+
+      # ------------------------------------------------------------
+      # Obtain package source
+      #
+      # If the URL ends in .tar.gz, download and unpack it.
+      # Otherwise, attempt to clone it as a Git repository.
+      # ------------------------------------------------------------
+
+      - name: Obtain package source
+        id: source
+        env:
+          PACKAGE_URL: ${{ steps.package.outputs.url }}
+        run: |
+          set -e
+
+          cd "$RUNNER_TEMP/package-validation"
+
+          if [[ "$PACKAGE_URL" =~ \.tar\.gz$ ]]; then
+
+            echo "Detected source tarball."
+            echo "source_type=tarball" >> "$GITHUB_OUTPUT"
+
+            curl --fail --location --retry 3 \
+              --output package.tar.gz \
+              "$PACKAGE_URL"
+
+            mkdir source
+
+            tar -xzf package.tar.gz \
+              -C source \
+              --strip-components=1
+
+          else
+
+            echo "Detected Git repository."
+            echo "source_type=git" >> "$GITHUB_OUTPUT"
+
+            git clone --depth 1 \
+              "$PACKAGE_URL" \
+              source
+
+          fi
+
+
+      # ------------------------------------------------------------
+      # R CMD build
+      # ------------------------------------------------------------
+
+      - name: R CMD build
+        id: build
+        run: |
+          set +e
+
+          cd "$RUNNER_TEMP/package-validation/source"
+
+          R CMD build . > "$RUNNER_TEMP/build.log" 2>&1
+
+          status=$?
+
+          cat "$RUNNER_TEMP/build.log"
+
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+          exit $status
+
+      # ------------------------------------------------------------
+      # Install System dependencies
+      # ------------------------------------------------------------
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev texlive-latex-base texlive-fonts-extra
+ 
+      # ------------------------------------------------------------
+      # Install package and dependencies with BiocManager
+      #
+      # BiocManager uses the current Bioconductor devel repositories
+      # and installs the package plus its declared dependencies.
+      # Suggests is included because it may be needed by R CMD check.
+      # ------------------------------------------------------------
+
+      - name: Install package and dependencies with BiocManager
+        id: dependencies
+        if: steps.build.outcome == 'success'
+        run: |
+          set +e
+
+          cd "$RUNNER_TEMP/package-validation"
+
+          PACKAGE_TARBALL=$(find . \
+            -maxdepth 2 \
+            -type f \
+            -name '*.tar.gz' \
+            ! -name 'package.tar.gz' |
+            head -n 1)
+
+          if [ -z "$PACKAGE_TARBALL" ]; then
+            echo "Could not find package tarball."
+            exit 1
+          fi
+
+          echo "Installing package and dependencies: $PACKAGE_TARBALL"
+
+          Rscript -e 'BiocManager::install(version = "devel", ask = FALSE, update = TRUE)'
+
+          Rscript -e 'cat("BiocManager repositories:\n"); print(BiocManager::repositories()); cat("\nR getOption(\"repos\"):\n"); print(getOption("repos"))'
+
+          Rscript -e 'BiocManager::install("remotes", ask = FALSE, update = FALSE)'
+
+          Rscript -e 'repos <- BiocManager::repositories(); remotes::install_local(commandArgs(trailingOnly = TRUE)[1], dependencies = TRUE, upgrade = "never", repos = repos)' \
+            "$PACKAGE_TARBALL" \
+            > "$RUNNER_TEMP/dependencies.log" 2>&1
+
+          status=$?
+
+          cat "$RUNNER_TEMP/dependencies.log"
+
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+          exit $status
+
+      # ------------------------------------------------------------
+      # R CMD INSTALL
+      #
+      # Run separately so that R CMD INSTALL gets its own result.
+      # ------------------------------------------------------------
+
+      - name: R CMD INSTALL
+        id: install
+        if: steps.dependencies.outcome == 'success'
+        run: |
+          set +e
+
+          cd "$RUNNER_TEMP/package-validation"
+
+          PACKAGE_TARBALL=$(find . \
+            -maxdepth 2 \
+            -type f \
+            -name '*.tar.gz' \
+            ! -name 'package.tar.gz' |
+            head -n 1)
+
+          if [ -z "$PACKAGE_TARBALL" ]; then
+            echo "Could not find package tarball."
+            exit 1
+          fi
+
+          echo "Installing: $PACKAGE_TARBALL"
+
+          R CMD INSTALL "$PACKAGE_TARBALL" \
+            > "$RUNNER_TEMP/install.log" 2>&1
+
+          status=$?
+
+          cat "$RUNNER_TEMP/install.log"
+
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+          exit $status
+
+
+      # ------------------------------------------------------------
+      # R CMD check
+      #
+      # Only run if R CMD INSTALL succeeded.
+      # ------------------------------------------------------------
+
+      - name: R CMD check
+        id: check
+        if: steps.install.outcome == 'success'
+        run: |
+          set +e
+
+          cd "$RUNNER_TEMP/package-validation"
+
+          PACKAGE_TARBALL=$(find . \
+            -maxdepth 2 \
+            -type f \
+            -name '*.tar.gz' \
+            ! -name 'package.tar.gz' |
+            head -n 1)
+
+          if [ -z "$PACKAGE_TARBALL" ]; then
+            echo "Could not find package tarball."
+            exit 1
+          fi
+
+          echo "Checking: $PACKAGE_TARBALL"
+
+          R CMD check "$PACKAGE_TARBALL" \
+            > "$RUNNER_TEMP/check.log" 2>&1
+
+          status=$?
+
+          cat "$RUNNER_TEMP/check.log"
+
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+          exit $status
+
+
+      # ------------------------------------------------------------
+      # Determine overall result
+      # ------------------------------------------------------------
+
+      - name: Determine validation result
+        id: result
+        if: always()
+        run: |
+
+          if [ "${{ steps.source.outcome }}" != "success" ]; then
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            echo "failure_stage=source retrieval" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ steps.build.outcome }}" != "success" ]; then
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            echo "failure_stage=R CMD build" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ steps.dependencies.outcome }}" != "success" ]; then
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            echo "failure_stage=dependency installation" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ steps.install.outcome }}" != "success" ]; then
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            echo "failure_stage=R CMD INSTALL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ steps.check.outcome }}" != "success" ]; then
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            echo "failure_stage=R CMD check" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "result=passed" >> "$GITHUB_OUTPUT"
+          echo "failure_stage=none" >> "$GITHUB_OUTPUT"
+
+
+      # ------------------------------------------------------------
+      # Update issue label
+      #
+      # There are only two possible validation labels:
+      #
+      #   validation:passed
+      #   validation:failed
+      # ------------------------------------------------------------
+
+      - name: Update validation label
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ steps.result.outputs.result }}
+        run: |
+          gh issue edit "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
+            --remove-label "PASSED" || true
+
+          gh issue edit "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
+            --remove-label "FAILED" || true
+
+          if [ "$RESULT" = "passed" ]; then
+            gh issue edit "${{ github.event.issue.number }}" \
+              --repo "${{ github.repository }}" \
+              --add-label "PASSED"
+          else
+            gh issue edit "${{ github.event.issue.number }}" \
+              --repo "${{ github.repository }}" \
+              --add-label "FAILED"
+          fi
+
+      # ------------------------------------------------------------
+      # Add validation report to the issue
+      # ------------------------------------------------------------
+
+      - name: Add validation report to issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_URL: ${{ steps.package.outputs.url }}
+          RESULT: ${{ steps.result.outputs.result }}
+          FAILURE_STAGE: ${{ steps.result.outputs.failure_stage }}
+        run: |
+
+          if [ "$RESULT" = "passed" ]; then
+            OVERALL="PASS"
+          else
+            OVERALL="FAIL"
+          fi
+
+          if [ "${{ steps.source.outcome }}" = "success" ]; then
+            SOURCE_RESULT="PASS"
+          else
+            SOURCE_RESULT="FAIL"
+          fi
+
+          if [ "${{ steps.build.outcome }}" = "success" ]; then
+            BUILD_RESULT="PASS"
+          elif [ "${{ steps.build.outcome }}" = "skipped" ]; then
+            BUILD_RESULT="NOT RUN"
+          else
+            BUILD_RESULT="FAIL"
+          fi
+
+          if [ "${{ steps.dependencies.outcome }}" = "success" ]; then
+            DEPENDENCY_RESULT="PASS"
+          elif [ "${{ steps.dependencies.outcome }}" = "skipped" ]; then
+            DEPENDENCY_RESULT="NOT RUN"
+          else
+            DEPENDENCY_RESULT="FAIL"
+          fi
+
+          if [ "${{ steps.install.outcome }}" = "success" ]; then
+            INSTALL_RESULT="PASS"
+          elif [ "${{ steps.install.outcome }}" = "skipped" ]; then
+            INSTALL_RESULT="NOT RUN"
+          else
+            INSTALL_RESULT="FAIL"
+          fi
+
+          if [ "${{ steps.check.outcome }}" = "success" ]; then
+            CHECK_RESULT="PASS"
+          elif [ "${{ steps.check.outcome }}" = "skipped" ]; then
+            CHECK_RESULT="NOT RUN"
+          else
+            CHECK_RESULT="FAIL"
+          fi
+
+          {
+            echo "## Annotation Package Validation"
+            echo
+            echo "**Package URL:** $PACKAGE_URL"
+            echo
+            echo "| Validation Stage | Result |"
+            echo "|---|---|"
+            echo "| Source retrieval | $SOURCE_RESULT |"
+            echo "| R CMD build | $BUILD_RESULT |"
+            echo "| Package and dependency installation | $DEPENDENCY_RESULT |"
+            echo "| R CMD INSTALL | $INSTALL_RESULT |"
+            echo "| R CMD check | $CHECK_RESULT |"
+            echo
+            echo "### Overall Result"
+            echo
+            echo "**$OVERALL**"
+            echo
+
+            if [ "$RESULT" = "failed" ]; then
+              echo "**Failure stage:** $FAILURE_STAGE"
+              echo
+            fi
+
+            echo "Complete output is available in the GitHub Actions workflow run."
+          } > "$RUNNER_TEMP/report.md"
+
+          gh issue comment "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
+            --body-file "$RUNNER_TEMP/report.md"
