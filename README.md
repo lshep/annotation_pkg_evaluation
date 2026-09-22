@@ -1,2 +1,2 @@
-# annotation_pkg_evalutation
+# annotation_pkg_evaluation
 Bioconductor Annotation Package Build/Check/Propagate
